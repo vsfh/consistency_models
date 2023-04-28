@@ -4,7 +4,6 @@ import os
 
 import blobfile as bf
 import torch as th
-import torch.distributed as dist
 from torch.nn.parallel.distributed import DistributedDataParallel as DDP
 from torch.optim import RAdam
 
@@ -69,7 +68,7 @@ class TrainLoop:
 
         self.step = 0
         self.resume_step = 0
-        self.global_batch = self.batch_size * dist.get_world_size()
+        self.global_batch = self.batch_size
 
         self.sync_cuda = th.cuda.is_available()
 
@@ -98,20 +97,9 @@ class TrainLoop:
 
         if th.cuda.is_available():
             self.use_ddp = True
-            self.ddp_model = DDP(
-                self.model,
-                device_ids=[dist_util.dev()],
-                output_device=dist_util.dev(),
-                broadcast_buffers=False,
-                bucket_cap_mb=128,
-                find_unused_parameters=False,
-            )
+            self.ddp_model = self.model
+
         else:
-            if dist.get_world_size() > 1:
-                logger.warn(
-                    "Distributed training requires CUDA. "
-                    "Gradients will not be synchronized properly!"
-                )
             self.use_ddp = False
             self.ddp_model = self.model
 
@@ -122,13 +110,13 @@ class TrainLoop:
 
         if resume_checkpoint:
             self.resume_step = parse_resume_step_from_filename(resume_checkpoint)
-            if dist.get_rank() == 0:
-                logger.log(f"loading model from checkpoint: {resume_checkpoint}...")
-                self.model.load_state_dict(
-                    dist_util.load_state_dict(
-                        resume_checkpoint, map_location=dist_util.dev()
-                    ),
-                )
+
+            logger.log(f"loading model from checkpoint: {resume_checkpoint}...")
+            self.model.load_state_dict(
+                dist_util.load_state_dict(
+                    resume_checkpoint, map_location=dist_util.dev()
+                ),
+            )
 
         dist_util.sync_params(self.model.parameters())
         dist_util.sync_params(self.model.buffers())
@@ -139,12 +127,11 @@ class TrainLoop:
         main_checkpoint = find_resume_checkpoint() or self.resume_checkpoint
         ema_checkpoint = find_ema_checkpoint(main_checkpoint, self.resume_step, rate)
         if ema_checkpoint:
-            if dist.get_rank() == 0:
-                logger.log(f"loading EMA from checkpoint: {ema_checkpoint}...")
-                state_dict = dist_util.load_state_dict(
-                    ema_checkpoint, map_location=dist_util.dev()
-                )
-                ema_params = self.mp_trainer.state_dict_to_master_params(state_dict)
+            logger.log(f"loading EMA from checkpoint: {ema_checkpoint}...")
+            state_dict = dist_util.load_state_dict(
+                ema_checkpoint, map_location=dist_util.dev()
+            )
+            ema_params = self.mp_trainer.state_dict_to_master_params(state_dict)
 
         dist_util.sync_params(ema_params)
         return ema_params
@@ -204,11 +191,7 @@ class TrainLoop:
                 model_kwargs=micro_cond,
             )
 
-            if last_batch or not self.use_ddp:
-                losses = compute_losses()
-            else:
-                with self.ddp_model.no_sync():
-                    losses = compute_losses()
+            losses = compute_losses()
 
             if isinstance(self.schedule_sampler, LossAwareSampler):
                 self.schedule_sampler.update_with_local_losses(
@@ -240,29 +223,26 @@ class TrainLoop:
     def save(self):
         def save_checkpoint(rate, params):
             state_dict = self.mp_trainer.master_params_to_state_dict(params)
-            if dist.get_rank() == 0:
-                logger.log(f"saving model {rate}...")
-                if not rate:
-                    filename = f"model{(self.step+self.resume_step):06d}.pt"
-                else:
-                    filename = f"ema_{rate}_{(self.step+self.resume_step):06d}.pt"
-                with bf.BlobFile(bf.join(get_blob_logdir(), filename), "wb") as f:
-                    th.save(state_dict, f)
+            logger.log(f"saving model {rate}...")
+            if not rate:
+                filename = f"model{(self.step+self.resume_step):06d}.pt"
+            else:
+                filename = f"ema_{rate}_{(self.step+self.resume_step):06d}.pt"
+            with bf.BlobFile(bf.join(get_blob_logdir(), filename), "wb") as f:
+                th.save(state_dict, f)
 
         for rate, params in zip(self.ema_rate, self.ema_params):
             save_checkpoint(rate, params)
 
-        if dist.get_rank() == 0:
-            with bf.BlobFile(
-                bf.join(get_blob_logdir(), f"opt{(self.step+self.resume_step):06d}.pt"),
-                "wb",
-            ) as f:
-                th.save(self.opt.state_dict(), f)
+        with bf.BlobFile(
+            bf.join(get_blob_logdir(), f"opt{(self.step+self.resume_step):06d}.pt"),
+            "wb",
+        ) as f:
+            th.save(self.opt.state_dict(), f)
 
         # Save model parameters last to prevent race conditions where a restart
         # loads model at step N, but opt/ema state isn't saved for step N.
         save_checkpoint(0, self.mp_trainer.master_params)
-        dist.barrier()
 
 
 class CMTrainLoop(TrainLoop):
@@ -324,7 +304,7 @@ class CMTrainLoop(TrainLoop):
             path, name = os.path.split(resume_checkpoint)
             target_name = name.replace("model", "target_model")
             resume_target_checkpoint = os.path.join(path, target_name)
-            if bf.exists(resume_target_checkpoint) and dist.get_rank() == 0:
+            if bf.exists(resume_target_checkpoint):
                 logger.log(
                     "loading model from checkpoint: {resume_target_checkpoint}..."
                 )
@@ -344,7 +324,7 @@ class CMTrainLoop(TrainLoop):
             teacher_name = name.replace("model", "teacher_model")
             resume_teacher_checkpoint = os.path.join(path, teacher_name)
 
-            if bf.exists(resume_teacher_checkpoint) and dist.get_rank() == 0:
+            if bf.exists(resume_teacher_checkpoint):
                 logger.log(
                     "loading model from checkpoint: {resume_teacher_checkpoint}..."
                 )
@@ -498,11 +478,8 @@ class CMTrainLoop(TrainLoop):
             else:
                 raise ValueError(f"Unknown training mode {self.training_mode}")
 
-            if last_batch or not self.use_ddp:
-                losses = compute_losses()
-            else:
-                with self.ddp_model.no_sync():
-                    losses = compute_losses()
+            losses = compute_losses()
+
 
             if isinstance(self.schedule_sampler, LossAwareSampler):
                 self.schedule_sampler.update_with_local_losses(
@@ -523,42 +500,38 @@ class CMTrainLoop(TrainLoop):
 
         def save_checkpoint(rate, params):
             state_dict = self.mp_trainer.master_params_to_state_dict(params)
-            if dist.get_rank() == 0:
-                logger.log(f"saving model {rate}...")
-                if not rate:
-                    filename = f"model{step:06d}.pt"
-                else:
-                    filename = f"ema_{rate}_{step:06d}.pt"
-                with bf.BlobFile(bf.join(get_blob_logdir(), filename), "wb") as f:
-                    th.save(state_dict, f)
+            logger.log(f"saving model {rate}...")
+            if not rate:
+                filename = f"model{step:06d}.pt"
+            else:
+                filename = f"ema_{rate}_{step:06d}.pt"
+            with bf.BlobFile(bf.join(get_blob_logdir(), filename), "wb") as f:
+                th.save(state_dict, f)
 
         for rate, params in zip(self.ema_rate, self.ema_params):
             save_checkpoint(rate, params)
 
         logger.log("saving optimizer state...")
-        if dist.get_rank() == 0:
-            with bf.BlobFile(
-                bf.join(get_blob_logdir(), f"opt{step:06d}.pt"),
-                "wb",
-            ) as f:
-                th.save(self.opt.state_dict(), f)
+        with bf.BlobFile(
+            bf.join(get_blob_logdir(), f"opt{step:06d}.pt"),
+            "wb",
+        ) as f:
+            th.save(self.opt.state_dict(), f)
 
-        if dist.get_rank() == 0:
-            if self.target_model:
-                logger.log("saving target model state")
-                filename = f"target_model{step:06d}.pt"
-                with bf.BlobFile(bf.join(get_blob_logdir(), filename), "wb") as f:
-                    th.save(self.target_model.state_dict(), f)
-            if self.teacher_model and self.training_mode == "progdist":
-                logger.log("saving teacher model state")
-                filename = f"teacher_model{step:06d}.pt"
-                with bf.BlobFile(bf.join(get_blob_logdir(), filename), "wb") as f:
-                    th.save(self.teacher_model.state_dict(), f)
+        if self.target_model:
+            logger.log("saving target model state")
+            filename = f"target_model{step:06d}.pt"
+            with bf.BlobFile(bf.join(get_blob_logdir(), filename), "wb") as f:
+                th.save(self.target_model.state_dict(), f)
+        if self.teacher_model and self.training_mode == "progdist":
+            logger.log("saving teacher model state")
+            filename = f"teacher_model{step:06d}.pt"
+            with bf.BlobFile(bf.join(get_blob_logdir(), filename), "wb") as f:
+                th.save(self.teacher_model.state_dict(), f)
 
         # Save model parameters last to prevent race conditions where a restart
         # loads model at step N, but opt/ema state isn't saved for step N.
         save_checkpoint(0, self.mp_trainer.master_params)
-        dist.barrier()
 
     def log_step(self):
         step = self.global_step

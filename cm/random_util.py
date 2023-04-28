@@ -1,6 +1,6 @@
 import torch as th
 import torch.distributed as dist
-from . import dist_util
+from . import own_dist_util as dist_util
 
 
 def get_generator(generator, num_samples=0, seed=0):

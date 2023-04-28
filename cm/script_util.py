@@ -1,6 +1,6 @@
 import argparse
 
-from .karras_diffusion import KarrasDenoiser
+from .own_karras_diffusion import KarrasDenoiser
 from .unet import UNetModel
 import numpy as np
 

@@ -7,16 +7,16 @@ import torch as th
 import torch.nn as nn
 import torch.nn.functional as F
 
-from .fp16_util import convert_module_to_f16, convert_module_to_f32
-from .nn import (
-    checkpoint,
-    conv_nd,
-    linear,
-    avg_pool_nd,
-    zero_module,
-    normalization,
-    timestep_embedding,
-)
+# from .fp16_util import convert_module_to_f16, convert_module_to_f32
+# from .nn import (
+#     checkpoint,
+#     conv_nd,
+#     linear,
+#     avg_pool_nd,
+#     zero_module,
+#     normalization,
+#     timestep_embedding,
+# )
 
 
 class AttentionPool2d(nn.Module):
@@ -354,6 +354,7 @@ class QKVFlashAttention(nn.Module):
             self.embed_dim % num_heads == 0
         ), "self.kdim must be divisible by num_heads"
         self.head_dim = self.embed_dim // num_heads
+        
         assert self.head_dim in [16, 32, 64], "Only support head_dim == 16, 32, or 64"
 
         self.inner_attn = FlashAttention(
@@ -770,3 +771,9 @@ class UNetModel(nn.Module):
             h = module(h, emb)
         h = h.type(x.dtype)
         return self.out(h)
+
+if __name__=='__main__':
+    a = nn.Conv2d(3, 192, kernel_size=(3, 3), stride=(1, 1), padding=(1,1)).cuda()
+    b = th.randn(4, 3, 64, 64).cuda()
+    a(b)
+    
