@@ -151,9 +151,8 @@ class TrainLoop:
     def run_loop(self):
         while not self.lr_anneal_steps or self.step < self.lr_anneal_steps:
             batch, cond = next(self.data)
+            logger.log(f"step:{self.step}")
             self.run_step(batch, cond)
-            if self.step % self.log_interval == 0:
-                logger.dumpkvs()
             if self.step % self.save_interval == 0:
                 self.save()
                 # Run for a finite amount of time in integration tests.
@@ -170,7 +169,7 @@ class TrainLoop:
             self.step += 1
             self._update_ema()
         self._anneal_lr()
-        self.log_step()
+        # self.log_step()
 
     def forward_backward(self, batch, cond):
         self.mp_trainer.zero_grad()
@@ -199,9 +198,9 @@ class TrainLoop:
                 )
 
             loss = (losses["loss"] * weights).mean()
-            log_loss_dict(
-                self.diffusion, t, {k: v * weights for k, v in losses.items()}
-            )
+            # log_loss_dict(
+            #     self.diffusion, t, {k: v * weights for k, v in losses.items()}
+            # )
             self.mp_trainer.backward(loss)
 
     def _update_ema(self):
@@ -557,7 +556,7 @@ def parse_resume_step_from_filename(filename):
 def get_blob_logdir():
     # You can change this to be a separate path to save checkpoints to
     # a blobstore or some external drive.
-    return logger.get_dir()
+    return "/mnt/d/github/consistency_models/weight/checkpoint/"
 
 
 def find_resume_checkpoint():

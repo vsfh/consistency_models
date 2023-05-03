@@ -66,35 +66,36 @@ def main():
 
 def create_argparser():
     defaults = dict(
-        data_dir="/home/disk/data/smile_sim/smile_6000/smile_6000",
+        data_dir="/mnt/d/data/lsun/bedroom_flat",
         schedule_sampler="lognormal",
         lr=1e-4,
         weight_decay=0.0,
         lr_anneal_steps=0,
-        global_batch_size=4096,
+        global_batch_size=128,
         batch_size=-1,
-        microbatch=4,  # -1 disables microbatches
+        microbatch=2,  # -1 disables microbatches
         ema_rate="0.999,0.9999,0.9999432189950708",  # comma-separated list of EMA values
-        log_interval=10,
+        log_interval=100,
         save_interval=10000,
-        resume_checkpoint="",
+        resume_checkpoint=""
+        ,
         use_fp16=True,
         fp16_scale_growth=1e-3,
         
         sigma_min=0.002,
         sigma_max=80.0,
-        image_size=64,
-        num_channels=192,
-        num_res_blocks=3,
+        image_size=256,
+        num_channels=128,
+        num_res_blocks=1,
         num_heads=4,
         num_heads_upsample=-1,
         num_head_channels=64,
-        attention_resolutions="32,16,8",
+        attention_resolutions="8,4,2",
         channel_mult="",
         dropout=0.1,
-        class_cond=True,
+        class_cond=False,
         use_checkpoint=False,
-        use_scale_shift_norm=True,
+        use_scale_shift_norm=False,
         resblock_updown=True,
         use_new_attention_order=False,
         learn_sigma=False,
