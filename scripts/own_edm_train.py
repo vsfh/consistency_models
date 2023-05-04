@@ -77,8 +77,7 @@ def create_argparser():
         ema_rate="0.999,0.9999,0.9999432189950708",  # comma-separated list of EMA values
         log_interval=100,
         save_interval=10000,
-        resume_checkpoint=""
-        ,
+        resume_checkpoint="",
         use_fp16=True,
         fp16_scale_growth=1e-3,
         
